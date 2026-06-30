@@ -1,0 +1,10 @@
+# Verified working set (Python 3.11, Windows). Installed to user site.
+ortools>=9.15
+numpy>=2.0
+pandas>=2.2
+pulp>=2.7
+openai>=1.40
+python-dotenv>=1.0
+textgrad>=0.1.8        # for run_tpo_textgrad.py (library-faithful Task 1)
+fastapi>=0.110
+uvicorn>=0.29

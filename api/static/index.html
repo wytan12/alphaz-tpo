@@ -1,0 +1,119 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nurse Schedule — Feedback Flow</title>
+<style>
+:root{--bg:#0f1117;--panel:#171a23;--panel2:#1d2230;--ink:#e6e8ee;--mut:#9aa3b2;
+--acc:#6ea8fe;--acc2:#7ee0c2;--warn:#ffcf6e;--bad:#ff8f8f;--bd:#2a3142;--code:#0b0d13}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px}
+h1{font-size:22px;margin:0 0 4px}.mut{color:var(--mut);font-size:13px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+@media(max-width:900px){.row{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;margin-top:16px}
+input,button{font:inherit}input[type=text]{background:var(--code);border:1px solid var(--bd);
+color:var(--ink);border-radius:8px;padding:9px 11px;width:100%}
+button{background:var(--acc);color:#06203f;border:0;border-radius:8px;padding:9px 16px;
+font-weight:700;cursor:pointer;margin-top:10px}button:hover{filter:brightness(1.08)}
+.chips button{background:var(--panel2);color:var(--ink);border:1px solid var(--bd);
+font-weight:500;padding:5px 11px;margin:4px 6px 0 0;font-size:13px}
+.stage{border-left:3px solid var(--acc);background:var(--panel2);border-radius:0 10px 10px 0;
+padding:10px 14px;margin:10px 0}.stage.warn{border-color:var(--warn)}.stage.bad{border-color:var(--bad)}
+.stage h3{margin:0 0 6px;font-size:14px;color:var(--acc2)}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:8px;padding:11px;
+overflow:auto;font:12px/1.5 Consolas,monospace;margin:6px 0 0}
+table{border-collapse:collapse;font-size:12px;margin-top:8px}
+td,th{border:1px solid var(--bd);padding:4px 7px;text-align:center}th{background:var(--panel2);color:var(--acc2)}
+.M{color:#7ee0c2}.E{color:#ffcf6e}.N{color:#ff8f8f}
+.tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--bd);color:var(--mut)}
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;margin-left:8px}
+.badge.llm{background:#1f3a2a;color:#8be58b;border:1px solid #2f5a40}
+.badge.fb{background:#3a341f;color:#ffcf6e;border:1px solid #5a4f2f}
+.it{font-size:12px;border:1px solid var(--bd);border-radius:7px;padding:6px 9px;margin:5px 0;background:var(--code)}
+small{color:var(--mut)}
+</style></head><body>
+<h1>🩺 Nurse Schedule — Feedback Flow <span id="badge"></span></h1>
+<div class="mut">Type a complaint and watch the pipeline: solve → localize → critique → TPO refine → feasibility. The badge shows whether explanations come from the LLM or the rule/template fallback.</div>
+
+<div class="card">
+  <b>Complaint / question</b>
+  <input id="complaint" type="text" value="Worker A is too tired" />
+  <div class="chips">
+    <button onclick="setC('Worker A is too tired')">Worker A is too tired</button>
+    <button onclick="setC('This schedule is unfair')">This schedule is unfair</button>
+    <button onclick="setC('Too many night shifts for Worker C')">Too many nights for C</button>
+    <button onclick="setC('huh this looks weird')">vague (clarify)</button>
+  </div>
+  <button onclick="runTrace()">▶ Run flow</button>
+  <div id="trace"></div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <b>🔍 Decision attribution</b> <small>— why is an assignment in the solution?</small>
+    <input id="target" type="text" value="A,Mon,M" />
+    <button onclick="runExplain()">Explain</button>
+    <div id="explain"></div>
+  </div>
+  <div class="card">
+    <b>🔀 Counterfactual</b> <small>— what if I change assignments? (W,D,S=0/1; comma-sep)</small>
+    <input id="cf" type="text" value="A,Wed,N=0; D,Wed,N=1" />
+    <button onclick="runCF()">Evaluate</button>
+    <div id="cfout"></div>
+  </div>
+</div>
+
+<div class="card">
+  <b>📅 Baseline schedule</b> <span id="solmeta" class="mut"></span>
+  <div id="grid"></div>
+</div>
+
+<script>
+let SID="";
+const $=id=>document.getElementById(id);
+const setC=t=>{$("complaint").value=t;};
+async function post(u,b){const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});return r.json();}
+
+function grid(assigns){
+ const W="ABCDEFGH".split(""),D=["Mon","Tue","Wed","Thu","Fri"];
+ const m={};assigns.forEach(a=>{const[w,d,s]=a.split(",");m[w+d]=(m[w+d]||"")+s;});
+ let h="<table><tr><th>Worker</th>"+D.map(d=>`<th>${d}</th>`).join("")+"</tr>";
+ W.forEach(w=>{h+=`<tr><th>${w}</th>`+D.map(d=>{const v=m[w+d]||"";
+   const cls=v?`class="${v[0]}"`:"";return `<td ${cls}>${v||"·"}</td>`;}).join("")+"</tr>";});
+ return h+"</table>";
+}
+async function loadBadge(){const r=await fetch("/status").then(x=>x.json());
+ const b=$("badge");
+ if(r.mode==="llm"){b.className="badge llm";b.textContent="● LLM: "+r.model;}
+ else{b.className="badge fb";b.textContent="● fallback (rule/template) — no API key";}}
+async function loadSol(){const s=await post("/solve");SID=s.solution_id;
+ $("solmeta").textContent=`(id ${SID} · objective ${s.objective_value} · ${Object.keys(s.assignments).length} shifts)`;
+ $("grid").innerHTML=grid(Object.keys(s.assignments));}
+
+async function runTrace(){
+ $("trace").innerHTML="<div class='mut'>running…</div>";
+ const r=await post("/trace",{complaint:$("complaint").value,solution_id:SID});
+ let h="";
+ r.stages.forEach(st=>{const cls=st.status==="warn"?"warn":(st.status==="bad"?"bad":"");
+   h+=`<div class="stage ${cls}"><h3>${st.id}. ${st.title}</h3>`;
+   if(st.detail.iterations){
+     st.detail.iterations.forEach(it=>{h+=`<div class="it">iter ${it.iteration}: feasible=${it.feasible}, objective=${it.objective_value}, complaint_free=${it.complaint_free}</div>`;});
+     h+=`<div><span class="tag">converged: ${st.detail.converged}</span></div>`;
+   } else { h+=`<pre>${JSON.stringify(st.detail,null,2)}</pre>`; }
+   h+="</div>";});
+ if(r.stopped==="clarify")h+="<div class='mut'>Pipeline stopped — clarification needed before TPO.</div>";
+ $("trace").innerHTML=h;
+}
+async function runExplain(){
+ $("explain").innerHTML="<div class='mut'>…</div>";
+ const r=await post("/explain",{target:$("target").value});
+ $("explain").innerHTML=`<pre>${JSON.stringify(r,null,2)}</pre>`;
+}
+async function runCF(){
+ $("cfout").innerHTML="<div class='mut'>…</div>";
+ const changes={};$("cf").value.split(";").forEach(p=>{p=p.trim();if(!p)return;
+   const[k,v]=p.split("=");changes[k.trim()]=parseInt(v);});
+ const r=await post("/counterfactual",{solution_id:SID,changes});
+ $("cfout").innerHTML=`<pre>${JSON.stringify(r,null,2)}</pre>`;
+}
+loadBadge();loadSol();
+</script></body></html>
